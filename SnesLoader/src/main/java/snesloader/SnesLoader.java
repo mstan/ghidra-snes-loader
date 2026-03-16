@@ -8,13 +8,12 @@ import ghidra.app.util.bin.ByteProvider;
 import ghidra.app.util.importer.MessageLog;
 import ghidra.app.util.opinion.AbstractProgramLoader;
 import ghidra.app.util.opinion.LoadSpec;
+import ghidra.app.util.opinion.Loaded;
 import ghidra.app.util.opinion.Loader;
 import ghidra.app.util.opinion.LoaderTier;
-import ghidra.framework.model.DomainFolder;
+import ghidra.app.util.opinion.LoadException;
 import ghidra.framework.model.DomainObject;
-import ghidra.program.model.lang.CompilerSpec;
 import ghidra.program.model.lang.Endian;
-import ghidra.program.model.lang.Language;
 import ghidra.program.model.lang.LanguageCompilerSpecPair;
 import ghidra.program.model.lang.LanguageCompilerSpecQuery;
 import ghidra.program.model.lang.Processor;
@@ -25,9 +24,6 @@ import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 import snesloader.RomInfo.RomKind;
 
-/**
- * TODO: Provide class-level documentation that describes what this loader does.
- */
 public class SnesLoader extends AbstractProgramLoader {
 
 	public static final String APPLY_SNES_LABELS_OPTION_NAME = "Apply SNES-specific Labels";
@@ -36,7 +32,6 @@ public class SnesLoader extends AbstractProgramLoader {
 
 	@Override
 	public String getName() {
-		// This name must match the name of the loader in the .opinion files.
 		return "SNES ROM";
 	}
 
@@ -58,7 +53,7 @@ public class SnesLoader extends AbstractProgramLoader {
 	@Override
 	public Collection<LoadSpec> findSupportedLoadSpecs(ByteProvider provider) throws IOException {
 		List<LoadSpec> loadSpecs = new ArrayList<>();
-		getLanguageService();  // Ensure Processors are loaded.
+		getLanguageService();
 		Processor snesProcessor;
 		try {
 			snesProcessor = Processor.toProcessor("65816");
@@ -98,21 +93,18 @@ public class SnesLoader extends AbstractProgramLoader {
 	}
 
 	@Override
-	protected boolean loadProgramInto(ByteProvider provider, LoadSpec loadSpec,
-			List<Option> options, MessageLog log, Program prog, TaskMonitor monitor) {
-		return false;
-	}
+	protected List<Loaded<Program>> loadProgram(Loader.ImporterSettings settings)
+			throws IOException, LoadException, CancelledException {
+		ByteProvider provider = settings.provider();
+		LoadSpec loadSpec = settings.loadSpec();
+		List<Option> options = settings.options();
+		MessageLog log = settings.log();
+		TaskMonitor monitor = settings.monitor();
 
-	@Override
-	protected List<Program> loadProgram(ByteProvider provider, String programName,
-			DomainFolder programFolder, LoadSpec loadSpec, List<Option> options, MessageLog log,
-			Object consumer, TaskMonitor monitor)
-			throws IOException, CancelledException {
-		List<Program> programs = new ArrayList<Program>();
+		List<Loaded<Program>> results = new ArrayList<>();
 		Collection<RomInfo> detectedRomKinds = detectRomKind(provider);
 		if (detectedRomKinds.size() == 0) {
-			// Weird but ok.
-			throw new IOException("Not a valid SNES ROM (has the file changed since starting the import?)");
+			throw new LoadException("Not a valid SNES ROM (has the file changed since starting the import?)");
 		}
 		if (detectedRomKinds.size() > 1) {
 			String errSummary = "Can't uniquely determine what kind of SNES ROM this is.";
@@ -124,52 +116,46 @@ public class SnesLoader extends AbstractProgramLoader {
 				sb.append(System.lineSeparator());
 			}
 			Msg.showError(this, null, "Can't load ROM", sb.toString());
-			return programs;
+			return results;
 		}
 		if (!loadSpec.isComplete()) {
 			Msg.debug(this, "loadSpec is not complete.");
-			return programs;
+			return results;
 		}
 
-		LanguageCompilerSpecPair pair = loadSpec.getLanguageCompilerSpec();
-		Language importerLanguage = getLanguageService().getLanguage(pair.languageID);
-		CompilerSpec importerCompilerSpec =
-			importerLanguage.getCompilerSpecByID(pair.compilerSpecID);
-
-		Program prog = createProgram(provider, programName, null, getName(),
-			importerLanguage, importerCompilerSpec, consumer);
+		Program prog = createProgram(settings);
 
 		RomInfo romInfo = detectedRomKinds.iterator().next();
-		boolean success = loadWithTransaction(provider, loadSpec, options, log, prog, monitor, romInfo);
-		if (success) {
-			programs.add(prog);
-		}
-
-		return programs;
-	}
-
-	private boolean loadWithTransaction(ByteProvider provider, LoadSpec loadSpec,
-			List<Option> options, MessageLog log, Program prog, TaskMonitor monitor, RomInfo romInfo)
-			throws IOException {
+		boolean success = false;
 		prog.setEventsEnabled(false);
 		int transactionID = prog.startTransaction("Loading - " + getName());
 		RomLoader loader = romInfo.getLoader();
-		boolean success = false;
 		try {
 			success = loader.load(provider, loadSpec, options, log, prog, monitor, romInfo);
-			return success;
 		}
 		finally {
 			prog.endTransaction(transactionID, success);
 			prog.setEventsEnabled(true);
 		}
+
+		if (success) {
+			results.add(new Loaded<>(prog, settings));
+		}
+
+		return results;
+	}
+
+	@Override
+	protected void loadProgramInto(Program program, Loader.ImporterSettings settings)
+			throws IOException, LoadException, CancelledException {
+		// Not supported
 	}
 
 	@Override
 	public List<Option> getDefaultOptions(ByteProvider provider, LoadSpec loadSpec,
-			DomainObject domainObject, boolean isLoadIntoProgram) {
+			DomainObject domainObject, boolean isLoadIntoProgram, boolean includeNonModifiable) {
 		List<Option> list =
-			super.getDefaultOptions(provider, loadSpec, domainObject, isLoadIntoProgram);
+			super.getDefaultOptions(provider, loadSpec, domainObject, isLoadIntoProgram, includeNonModifiable);
 
 		list.add(new Option(APPLY_SNES_LABELS_OPTION_NAME, true, Boolean.class,
 			Loader.COMMAND_LINE_ARG_PREFIX + "-applySnesLabels"));
@@ -182,7 +168,7 @@ public class SnesLoader extends AbstractProgramLoader {
 	@Override
 	public String validateOptions(ByteProvider provider, LoadSpec loadSpec, List<Option> options, Program program) {
 		String error = super.validateOptions(provider, loadSpec, options, program);
-		
+
 		if (error == null && options != null) {
 			for (Option option : options) {
 				String name = option.getName();

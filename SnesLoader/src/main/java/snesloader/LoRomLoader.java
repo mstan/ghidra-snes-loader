@@ -44,14 +44,11 @@ public class LoRomLoader implements RomInfoProvider {
 			for (Address mirrorAddress : busAddresses) {
 				String mirrorBlockName = getRomChunkMirrorName(romChunk, mirrorNum);
 				MemoryBlockUtils.createByteMappedBlock(prog, mirrorBlockName, mirrorAddress, primaryAddress,
-						(int) romChunk.getLength(), String.format("mirror of %s", primaryBlockName), "", true, false,
-						true, log);
+						(int) romChunk.getLength(), String.format("mirror of %s", primaryBlockName), "",
+						true, false, false, true, log);
 				mirrorNum++;
 			}
 		}
-
-		// throw new UnsupportedOperationException("Loading a LO_ROM format is not
-		// implemented yet.");
 
 		return true;
 	}
